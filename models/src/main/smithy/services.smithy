@@ -39,7 +39,6 @@ operation Adder {
         @required
         a: Integer
 
-        @required
         b: Integer
     }
 

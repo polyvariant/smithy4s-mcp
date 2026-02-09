@@ -34,8 +34,14 @@ import jsonrpclib.fs2.given
 import jsonrpclib.fs2.lsp
 import jsonrpclib.smithy4sinterop.ServerEndpoints
 import my.server.AdderInput
+import my.server.AdderOutput
 import my.server.MyMcpServer
 import smithy4s.Document
+import smithy4s.Hints
+import smithy4s.ShapeId
+import smithy4s.schema.Field
+import smithy4s.schema.Primitive
+import smithy4s.schema.Schema
 import smithy4s.schema.SchemaVisitor
 
 object main extends IOApp.Simple {
@@ -49,6 +55,61 @@ object main extends IOApp.Simple {
   //   .apply(fs2.Stream.emit(s + "\n").through(fs2.text.utf8.encode))
   //   .compile
   //   .drain
+
+  enum SSchema {
+    case ObjectSchema(properties: Map[String, SSchema], required: List[String])
+    case NumberSchema
+
+    def asDocument: Document =
+      this match {
+        case ObjectSchema(properties, required) =>
+          Document.obj(
+            "type" -> Document.fromString("object"),
+            "properties" -> Document.obj(
+              properties.map(_ -> _.asDocument).toSeq
+            ),
+            "required" -> Document.array(required.map(Document.fromString)),
+          )
+        case NumberSchema => Document.obj("type" -> Document.fromString("number"))
+      }
+
+  }
+
+  object SchemaDerivation extends SchemaVisitor.Default[[_] =>> SSchema] {
+    def default[A]: SSchema = ???
+
+    override def primitive[P](shapeId: ShapeId, hints: Hints, tag: Primitive[P]): SSchema =
+      tag match {
+        case Primitive.PInt => SSchema.NumberSchema
+        case _              => ???
+      }
+
+    override def option[A](schema: Schema[A]): SSchema = schema.compile(
+      this
+    ) // optionality handled on struct level
+
+    override def struct[S](
+      shapeId: ShapeId,
+      hints: Hints,
+      fields: Vector[Field[S, ?]],
+      make: IndexedSeq[Any] => S,
+    ): SSchema = SSchema.ObjectSchema(
+      properties = fields.map(f => f.label -> f.schema.compile(this)).toMap,
+      required = fields.filter(_.isRequired).map(_.label).toList,
+    )
+
+  }
+
+  def deriveSchema[A: Schema]: ToolSchema =
+    Schema[A].compile(SchemaDerivation) match {
+      case SSchema.ObjectSchema(properties, required) =>
+        ToolSchema(
+          _type = "object",
+          properties = Some(Document.obj(properties.map(_ -> _.asDocument).toSeq)),
+          required = Some(required),
+        )
+      case _ => sys.error("Only object schemas are supported on the top level")
+    }
 
   def run: IO[Unit] = {
 
@@ -86,27 +147,8 @@ object main extends IOApp.Simple {
               tools = List(
                 Tool(
                   name = "adder",
-                  inputSchema = ToolSchema(
-                    _type = "object",
-                    properties = Some(
-                      Document.obj(
-                        "a" -> Document.obj("type" -> Document.fromString("number")),
-                        "b" -> Document.obj("type" -> Document.fromString("number")),
-                      )
-                    ),
-                    required = Some(List("a", "b")),
-                  ),
-                  outputSchema = Some(
-                    ToolSchema(
-                      _type = "object",
-                      properties = Some(
-                        Document.obj(
-                          "result" -> Document.obj("type" -> Document.fromString("number"))
-                        )
-                      ),
-                      required = Some(List("result")),
-                    )
-                  ),
+                  inputSchema = deriveSchema[AdderInput],
+                  outputSchema = Some(deriveSchema[AdderOutput]),
                 )
               )
             )
@@ -125,7 +167,9 @@ object main extends IOApp.Simple {
               CallToolResult(
                 content = Nil,
                 structuredContent = Some(
-                  Document.obj("result" -> Document.fromInt(decodedArgs.a + decodedArgs.b))
+                  Document.obj(
+                    "result" -> Document.fromInt(decodedArgs.a + decodedArgs.b.getOrElse(0))
+                  )
                 ),
               )
             )
