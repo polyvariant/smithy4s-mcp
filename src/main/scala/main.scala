@@ -36,6 +36,7 @@ import jsonrpclib.smithy4sinterop.ServerEndpoints
 import my.server.AdderInput
 import my.server.MyMcpServer
 import smithy4s.Document
+import smithy4s.schema.SchemaVisitor
 
 object main extends IOApp.Simple {
 

@@ -20,6 +20,35 @@ service MyMcpServer {
     ]
 }
 
+// @protocolDefinition(
+//     traits: [tool]
+// )
+// @trait
+// structure mcp {}
+// @trait
+// structure tool {}
+// @mcp
+// service MyServer {
+//     operations: [
+//         Adder
+//     ]
+// }
+// @tool
+operation Adder {
+    input := {
+        @required
+        a: Integer
+
+        @required
+        b: Integer
+    }
+
+    output := {
+        @required
+        result: Integer
+    }
+}
+
 @jsonRpcRequest("initialize")
 operation Initialize {
     input: InitializeRequestParams
@@ -36,19 +65,4 @@ operation ListTools {
 operation CallTool {
     input: CallToolRequestParams
     output: CallToolResult
-}
-
-operation Adder {
-    input := {
-        @required
-        a: Integer
-
-        @required
-        b: Integer
-    }
-
-    output := {
-        @required
-        result: Integer
-    }
 }
