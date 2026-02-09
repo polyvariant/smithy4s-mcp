@@ -11,29 +11,7 @@ use com.anthropic.mcp#PaginatedRequestParams
 use jsonrpclib#jsonRpc
 use jsonrpclib#jsonRpcRequest
 
-@jsonRpc
-service MyMcpServer {
-    operations: [
-        Initialize
-        ListTools
-        CallTool
-    ]
-}
-
-// @protocolDefinition(
-//     traits: [tool]
-// )
-// @trait
-// structure mcp {}
-// @trait
-// structure tool {}
-// @mcp
-// service MyServer {
-//     operations: [
-//         Adder
-//     ]
-// }
-// @tool
+@tool
 operation Adder {
     input := {
         @required
@@ -46,6 +24,34 @@ operation Adder {
         @required
         result: Integer
     }
+}
+
+@jsonRpc
+service MyMcpServer {
+    operations: [
+        Initialize
+        ListTools
+        CallTool
+    ]
+}
+
+@protocolDefinition(
+    traits: [tool]
+)
+@trait
+@traitValidators({
+    AllOpsAreTools: { selector: "~> operation:not([trait|my.server#tool])", message: "All operations of MCP services must be tools" }
+})
+structure mcp {}
+
+@trait
+structure tool {}
+
+@mcp
+service MyServer {
+    operations: [
+        Adder
+    ]
 }
 
 @jsonRpcRequest("initialize")

@@ -23,5 +23,8 @@ lazy val root = project
       "org.typelevel" %% "cats-effect" % "3.6.3",
     ),
     run / fork := true,
+    scalacOptions ++= Seq(
+      "-Wunused:all"
+    ),
   )
   .enablePlugins(JavaAppPackaging)
