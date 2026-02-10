@@ -21,6 +21,9 @@ import jsonrpclib.smithy4sinterop.ServerEndpoints
 import modelcontextprotocol.CallToolResult
 import modelcontextprotocol.ClientCapabilities
 import modelcontextprotocol.Cursor
+import modelcontextprotocol.ElicitFormSchema
+import modelcontextprotocol.ElicitRequestFormParams
+import modelcontextprotocol.ElicitRequestParams
 import modelcontextprotocol.Implementation
 import modelcontextprotocol.InitializeResult
 import modelcontextprotocol.ListToolsResult
@@ -30,12 +33,16 @@ import modelcontextprotocol.Tool
 import modelcontextprotocol.ToolAnnotations
 import modelcontextprotocol.ToolSchema
 import modelcontextprotocol.ToolsCapability
+import my.server.AskNameOutput
+import my.server.MyClient
 import smithy.api.Readonly
 import smithy4s.Document
 import smithy4s.Hints
 import smithy4s.Service
 import smithy4s.ShapeId
 import smithy4s.kinds.FunctorAlgebra
+import smithy4s.schema.Alt
+import smithy4s.schema.Alt.Dispatcher
 import smithy4s.schema.Field
 import smithy4s.schema.Primitive
 import smithy4s.schema.Schema
@@ -52,12 +59,32 @@ import McpServerBuilder.internal.*
 object McpServerBuilder {
 
   def build[Alg[_[_, _, _, _, _]]](
-    impl: FunctorAlgebra[Alg, IO]
+    // todo: abstract away client type
+    impl: MyClient[IO] ?=> FunctorAlgebra[Alg, IO]
   )(
-    using service: Service[Alg]
+    using service: Service[Alg],
+    rawClient: McpClientApi[IO],
   ): McpServerApi[IO] =
     new {
       def ping(): IO[Unit] = IO.unit
+
+      given MyClient[IO] =
+        new {
+          def askName(message: String): IO[AskNameOutput] = rawClient
+            .elicitation(
+              ElicitRequestParams.form(
+                form = ElicitRequestFormParams(
+                  message = "message",
+                  requestedSchema = ElicitFormSchema(
+                    _type = "object",
+                    properties = deriveSchema[AskNameOutput].properties.get,
+                    required = deriveSchema[AskNameOutput].required,
+                  ),
+                )
+              )
+            )
+            .flatMap(_.content.get.decode[AskNameOutput].liftTo[IO])
+        }
 
       val allMyMonkeysCompiled: ListMap[String, CompiledTool] = {
         val fk = service.toPolyFunction(impl)
@@ -158,7 +185,9 @@ object McpServerBuilder {
 
     enum SSchema {
       case ObjectSchema(properties: Map[String, SSchema], required: List[String])
+      case AnyOfSchema(options: List[SSchema])
       case NumberSchema
+      case StringSchema
 
       def asDocument: Document =
         this match {
@@ -170,7 +199,12 @@ object McpServerBuilder {
               ),
               "required" -> Document.array(required.map(Document.fromString)),
             )
-          case NumberSchema => Document.obj("type" -> Document.fromString("number"))
+          case NumberSchema         => Document.obj("type" -> Document.fromString("number"))
+          case StringSchema         => Document.obj("type" -> Document.fromString("string"))
+          case AnyOfSchema(options) =>
+            Document.obj(
+              "anyOf" -> Document.array(options.map(_.asDocument))
+            )
         }
 
     }
@@ -178,10 +212,18 @@ object McpServerBuilder {
     object SchemaDerivation extends SchemaVisitor.Default[[_] =>> SSchema] {
       def default[A]: SSchema = ???
 
+      override def union[U](
+        shapeId: ShapeId,
+        hints: Hints,
+        alternatives: Vector[Alt[U, ?]],
+        dispatch: Dispatcher[U],
+      ): SSchema = SSchema.AnyOfSchema(alternatives.toList.map(alt => alt.schema.compile(this)))
+
       override def primitive[P](shapeId: ShapeId, hints: Hints, tag: Primitive[P]): SSchema =
         tag match {
-          case Primitive.PInt => SSchema.NumberSchema
-          case _              => ???
+          case Primitive.PInt    => SSchema.NumberSchema
+          case Primitive.PString => SSchema.StringSchema
+          case _                 => ???
         }
 
       override def option[A](schema: Schema[A]): SSchema = schema.compile(

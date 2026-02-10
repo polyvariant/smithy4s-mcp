@@ -3,9 +3,12 @@ $version: "2"
 namespace smithy4smcptraits
 
 use jsonrpclib#jsonRpc
+use jsonrpclib#jsonRpcPayload
 use jsonrpclib#jsonRpcRequest
 use modelcontextprotocol#CallToolRequestParams
 use modelcontextprotocol#CallToolResult
+use modelcontextprotocol#ElicitRequestParams
+use modelcontextprotocol#ElicitResult
 use modelcontextprotocol#InitializeRequestParams
 use modelcontextprotocol#InitializeResult
 use modelcontextprotocol#ListToolsResult
@@ -20,8 +23,24 @@ use modelcontextprotocol#PaginatedRequestParams
 })
 structure mcpServerDefinition {}
 
+@protocolDefinition(
+    traits: [mcpElicitation]
+)
+@trait
+@traitValidators({
+    AllOpsAreElicitations: { selector: "~> operation:not([trait|smithy4smcptraits#mcpElicitation])", message: "All operations of MCP services must be elicications" }
+})
+structure mcpClientDefinition {}
+
 @trait
 structure mcpTool {}
+
+// inputs of operations with this trait MUST NOT have any members that aren't "message"
+@trait
+@traitValidators({
+    OnlyMessageMember: { selector: "operation -[input]-> > member:not([id|member=message])", message: "Elicitation operations can only have a single required string member named 'message'." }
+})
+structure mcpElicitation {}
 
 @jsonRpc
 service McpServerApi {
@@ -37,7 +56,19 @@ service McpServerApi {
 service McpClientApi {
     operations: [
         Ping
+        Elicitation
     ]
+}
+
+@jsonRpcRequest("elicitation/create")
+operation Elicitation {
+    input := {
+        @jsonRpcPayload
+        @required
+        params: ElicitRequestParams
+    }
+
+    output: ElicitResult
 }
 
 @jsonRpcRequest("initialize")

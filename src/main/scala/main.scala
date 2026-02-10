@@ -8,9 +8,9 @@ import modelcontextprotocol.InitializeResult
 import modelcontextprotocol.ServerCapabilities
 import modelcontextprotocol.ToolsCapability
 import my.server.AdderOutput
+import my.server.MyClient
 import my.server.MyServer
 import smithy4s.Document
-import smithy4smcptraits.McpClientApi
 import smithy4smcptraits.McpServerApi
 
 object main extends IOApp.Simple {
@@ -18,14 +18,17 @@ object main extends IOApp.Simple {
   def run: IO[Unit] = {
 
     def myTools(
-      using client: McpClientApi[IO]
+      using client: MyClient[IO]
     ): MyServer[IO] =
       new {
         def adder(a: Int, b: Option[Int]): IO[AdderOutput] =
-          client.ping() *>
-            IO.pure(
-              AdderOutput(result = a + b.getOrElse(0))
-            )
+          for {
+            name <- client.askName("say my name")
+            _ <- printErr(s"Hello, $name! Adding $a and ${b.getOrElse(0)}")
+          } yield AdderOutput(
+            result = a + b.getOrElse(0),
+            Some(s"You're goddamn right, ${name.name}"),
+          )
       }
 
     printErr("Starting server") *>
