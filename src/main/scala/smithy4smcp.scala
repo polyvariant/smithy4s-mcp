@@ -1,8 +1,6 @@
 package app
 
-import cats.effect.ExitCode
 import cats.effect.IO
-import cats.effect.IOApp
 import cats.effect.Resource
 import cats.syntax.all.*
 import com.github.plokhotnyuk.jsoniter_scala.circe.JsoniterScalaCodec.*
@@ -43,14 +41,12 @@ import modelcontextprotocol.Tool
 import modelcontextprotocol.ToolAnnotations
 import modelcontextprotocol.ToolSchema
 import modelcontextprotocol.ToolsCapability
-import my.server.GithubMcpServer
 import org.http4s.Header
 import org.http4s.Method
 import org.http4s.Request
 import org.http4s.ServerSentEvent
 import org.http4s.Uri
 import org.http4s.client.Client
-import org.http4s.ember.client.EmberClientBuilder
 import org.http4s.headers.Accept
 import org.http4s.headers.`Content-Type`
 import org.typelevel.ci.CIString
@@ -471,8 +467,9 @@ object McpBuilder {
             val decodeOut = CirceJsonCodec.Decoder.fromSchema(fa.output)
 
             { in =>
-              (callIdRef.getAndUpdate(_ + 1), sessionIdRef.get).tupled.flatMap {
-                (callId, sessionIdOpt) =>
+              (callIdRef.getAndUpdate(_ + 1).map(CallId.NumberId(_)), sessionIdRef.get)
+                .tupled
+                .flatMap { (callId, sessionIdOpt) =>
                   rawClient
                     .run(
                       Request[IO](method = Method.POST, uri = baseUrl)
@@ -483,7 +480,7 @@ object McpBuilder {
                               {
                                 RequestMessage(
                                   method = fa.hints.get[JsonRpcRequest].get.value,
-                                  callId = CallId.NumberId(callId),
+                                  callId = callId,
                                   params = Some(Payload(encodeIn(in))),
                                 ): Message
                               }
@@ -507,31 +504,7 @@ object McpBuilder {
                         )
                     )
                     .use { response =>
-                      val isStream = response
-                        .headers
-                        .get[`Content-Type`]
-                        .exists { ct =>
-                          ct.mediaType == org.http4s.MediaType.`text/event-stream`
-                        }
-
-                      val handleStream = response
-                        .body
-                        .through(ServerSentEvent.decoder[IO])
-                        // .evalTap { sse =>
-                        //   IO.println(s"SSE event: ${sse}")
-                        // }
-                        .collect { case ServerSentEvent(data = Some(bodyText)) => bodyText }
-                        .compile
-                        .toList
-                        .map(_.head) // consume everything but only keep first event
-
-                      val handleJson =
-                        response
-                          .bodyText
-                          .compile
-                          .string
-
-                      def decodeResponseText(txt: String) = io
+                      def decodeResponseMessage(txt: String) = io
                         .circe
                         .parser
                         .decode[Message](txt)
@@ -542,20 +515,47 @@ object McpBuilder {
                             e,
                           )
                         }
-                        .flatMap { msg =>
-                          msg match {
-                            case ResponseMessage(callId, data) =>
-                              decodeOut
-                                .decodeJson(data.data)
-                                .liftTo[IO]
-                                .adaptError { case e =>
-                                  new RuntimeException(
-                                    s"Failed to decode response for call $callId: ${e.getMessage}",
-                                    e,
-                                  )
-                                }
-                          }
+                        .map { case rm: ResponseMessage => rm }
+
+                      def completeDecoding(rm: ResponseMessage) = decodeOut
+                        .decodeJson(rm.data.data)
+                        .liftTo[IO]
+                        .adaptError { case e =>
+                          new RuntimeException(
+                            s"Failed to decode response for call $callId: ${e.getMessage}",
+                            e,
+                          )
                         }
+
+                      val isStream = response
+                        .headers
+                        .get[`Content-Type`]
+                        .exists { ct =>
+                          ct.mediaType == org.http4s.MediaType.`text/event-stream`
+                        }
+
+                      val handleStream = response
+                        .body
+                        .through(ServerSentEvent.decoder[IO])
+                        // .debug("SSE: " + _)
+                        .collect {
+                          case ServerSentEvent(
+                                eventType = Some("message"),
+                                data = Some(bodyText),
+                              ) =>
+                            bodyText
+                        }
+                        .evalMap(decodeResponseMessage)
+                        .collectFirst { case rm @ ResponseMessage(callId = `callId`) => rm }
+                        .compile
+                        .toList
+                        .map(_.head)
+
+                      val handleJson = response
+                        .bodyText
+                        .compile
+                        .string
+                        .flatMap(decodeResponseMessage)
 
                       response
                         .headers
@@ -566,12 +566,13 @@ object McpBuilder {
                           if isStream then handleStream
                           else
                             handleJson
-                        }.flatMap(decodeResponseText)
+                        }
+                          .flatMap(completeDecoding)
                           .adaptError { case e =>
                             new RuntimeException(s"HTTP request failed: ${e.getMessage}", e)
                           }
                     }
-              }
+                }
             }
           }
         })
