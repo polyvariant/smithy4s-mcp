@@ -21,7 +21,7 @@ object clientMainHttp extends IOApp {
         .build
         // .map(Logger(logHeaders = true, logBody = true, logAction = Some(IO.println)))
         .evalMap { httpClient =>
-          McpBuilder.httpClient(httpClient, Uri.unsafeFromString(args(0)))
+          McpBuilder.httpClient(McpServerApi, httpClient, Uri.unsafeFromString(args(0)))
         }
         .onFinalize(printErr("Terminating client"))
         .use { case given McpServerApi[IO] =>

@@ -456,127 +456,130 @@ object McpBuilder {
     }
   }
 
-  def httpClient(rawClient: Client[IO], baseUrl: Uri): IO[McpServerApi[IO]] =
-    (IO.ref(0L), IO.ref(none[String]))
-      .tupled
-      .map { (callIdRef, sessionIdRef) =>
-        McpServerApi.impl(new McpServerApi.FunctorEndpointCompiler[IO] {
-          def apply[I, E, O, SI, SO](fa: McpServerApi.Endpoint[I, E, O, SI, SO]): I => IO[O] = {
-            val encodeIn = CirceJsonCodec.Encoder.fromSchema(fa.input)
+  def httpClient[Remote[_[_, _, _, _, _]]](
+    service: Service[Remote],
+    rawClient: Client[IO],
+    baseUrl: Uri,
+  ): IO[service.Impl[IO]] = (IO.ref(0L), IO.ref(none[String]))
+    .tupled
+    .map { (callIdRef, sessionIdRef) =>
+      service.impl(new service.FunctorEndpointCompiler[IO] {
+        def apply[I, E, O, SI, SO](fa: service.Endpoint[I, E, O, SI, SO]): I => IO[O] = {
+          val encodeIn = CirceJsonCodec.Encoder.fromSchema(fa.input)
 
-            val decodeOut = CirceJsonCodec.Decoder.fromSchema(fa.output)
+          val decodeOut = CirceJsonCodec.Decoder.fromSchema(fa.output)
 
-            { in =>
-              (callIdRef.getAndUpdate(_ + 1).map(CallId.NumberId(_)), sessionIdRef.get)
-                .tupled
-                .flatMap { (callId, sessionIdOpt) =>
-                  rawClient
-                    .run(
-                      Request[IO](method = Method.POST, uri = baseUrl)
-                        .withBodyStream(
-                          fs2
-                            .Stream
-                            .emits(
-                              {
-                                RequestMessage(
-                                  method = fa.hints.get[JsonRpcRequest].get.value,
-                                  callId = callId,
-                                  params = Some(Payload(encodeIn(in))),
-                                ): Message
-                              }
-                                .asJson
-                                .noSpaces
-                                .getBytes()
-                            )
-                        )
-                        .withContentType(
-                          org
-                            .http4s
-                            .headers
-                            .`Content-Type`(org.http4s.MediaType.application.json)
-                        )
-                        .withHeaders(
-                          Accept(
-                            org.http4s.MediaType.application.json,
-                            org.http4s.MediaType.`text/event-stream`,
-                          ),
-                          sessionIdOpt.map(sid => Header.Raw(CIString("mcp-session-id"), sid)),
-                        )
-                    )
-                    .use { response =>
-                      def decodeResponseMessage(txt: String) = io
-                        .circe
-                        .parser
-                        .decode[Message](txt)
-                        .liftTo[IO]
-                        .adaptError { case e =>
-                          new RuntimeException(
-                            s"Failed to decode JSON-RPC message: ${e.getMessage}, from ${txt}",
-                            e,
+          { in =>
+            (callIdRef.getAndUpdate(_ + 1).map(CallId.NumberId(_)), sessionIdRef.get)
+              .tupled
+              .flatMap { (callId, sessionIdOpt) =>
+                rawClient
+                  .run(
+                    Request[IO](method = Method.POST, uri = baseUrl)
+                      .withBodyStream(
+                        fs2
+                          .Stream
+                          .emits(
+                            {
+                              RequestMessage(
+                                method = fa.hints.get[JsonRpcRequest].get.value,
+                                callId = callId,
+                                params = Some(Payload(encodeIn(in))),
+                              ): Message
+                            }
+                              .asJson
+                              .noSpaces
+                              .getBytes()
                           )
-                        }
-                        .map { case rm: ResponseMessage => rm }
+                      )
+                      .withContentType(
+                        org
+                          .http4s
+                          .headers
+                          .`Content-Type`(org.http4s.MediaType.application.json)
+                      )
+                      .withHeaders(
+                        Accept(
+                          org.http4s.MediaType.application.json,
+                          org.http4s.MediaType.`text/event-stream`,
+                        ),
+                        sessionIdOpt.map(sid => Header.Raw(CIString("mcp-session-id"), sid)),
+                      )
+                  )
+                  .use { response =>
+                    def decodeResponseMessage(txt: String) = io
+                      .circe
+                      .parser
+                      .decode[Message](txt)
+                      .liftTo[IO]
+                      .adaptError { case e =>
+                        new RuntimeException(
+                          s"Failed to decode JSON-RPC message: ${e.getMessage}, from ${txt}",
+                          e,
+                        )
+                      }
+                      .map { case rm: ResponseMessage => rm }
 
-                      def completeDecoding(rm: ResponseMessage) = decodeOut
-                        .decodeJson(rm.data.data)
-                        .liftTo[IO]
+                    def completeDecoding(rm: ResponseMessage) = decodeOut
+                      .decodeJson(rm.data.data)
+                      .liftTo[IO]
+                      .adaptError { case e =>
+                        new RuntimeException(
+                          s"Failed to decode response for call $callId: ${e.getMessage}",
+                          e,
+                        )
+                      }
+
+                    val isStream = response
+                      .headers
+                      .get[`Content-Type`]
+                      .exists { ct =>
+                        ct.mediaType == org.http4s.MediaType.`text/event-stream`
+                      }
+
+                    val handleStream = response
+                      .body
+                      .through(ServerSentEvent.decoder[IO])
+                      // .debug("SSE: " + _)
+                      .collect {
+                        case ServerSentEvent(
+                              eventType = Some("message"),
+                              data = Some(bodyText),
+                            ) =>
+                          bodyText
+                      }
+                      .evalMap(decodeResponseMessage)
+                      .collectFirst { case rm @ ResponseMessage(callId = `callId`) => rm }
+                      .compile
+                      .toList
+                      .map(_.head)
+
+                    val handleJson = response
+                      .bodyText
+                      .compile
+                      .string
+                      .flatMap(decodeResponseMessage)
+
+                    response
+                      .headers
+                      .get(CIString("mcp-session-id"))
+                      .map(_.head.value)
+                      .traverseVoid(_.some.pipe(sessionIdRef.set)) *>
+                      {
+                        if isStream then handleStream
+                        else
+                          handleJson
+                      }
+                        .flatMap(completeDecoding)
                         .adaptError { case e =>
-                          new RuntimeException(
-                            s"Failed to decode response for call $callId: ${e.getMessage}",
-                            e,
-                          )
+                          new RuntimeException(s"HTTP request failed: ${e.getMessage}", e)
                         }
-
-                      val isStream = response
-                        .headers
-                        .get[`Content-Type`]
-                        .exists { ct =>
-                          ct.mediaType == org.http4s.MediaType.`text/event-stream`
-                        }
-
-                      val handleStream = response
-                        .body
-                        .through(ServerSentEvent.decoder[IO])
-                        // .debug("SSE: " + _)
-                        .collect {
-                          case ServerSentEvent(
-                                eventType = Some("message"),
-                                data = Some(bodyText),
-                              ) =>
-                            bodyText
-                        }
-                        .evalMap(decodeResponseMessage)
-                        .collectFirst { case rm @ ResponseMessage(callId = `callId`) => rm }
-                        .compile
-                        .toList
-                        .map(_.head)
-
-                      val handleJson = response
-                        .bodyText
-                        .compile
-                        .string
-                        .flatMap(decodeResponseMessage)
-
-                      response
-                        .headers
-                        .get(CIString("mcp-session-id"))
-                        .map(_.head.value)
-                        .traverseVoid(_.some.pipe(sessionIdRef.set)) *>
-                        {
-                          if isStream then handleStream
-                          else
-                            handleJson
-                        }
-                          .flatMap(completeDecoding)
-                          .adaptError { case e =>
-                            new RuntimeException(s"HTTP request failed: ${e.getMessage}", e)
-                          }
-                    }
-                }
-            }
+                  }
+              }
           }
-        })
-      }
+        }
+      })
+    }
 
 }
 
