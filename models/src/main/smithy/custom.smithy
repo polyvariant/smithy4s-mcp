@@ -7,6 +7,20 @@ use smithy4smcptraits#mcpElicitation
 use smithy4smcptraits#mcpServerDefinition
 use smithy4smcptraits#mcpTool
 
+@mcpServerDefinition
+service MyServer {
+    operations: [
+        Adder
+    ]
+}
+
+@mcpClientDefinition
+service MyClient {
+    operations: [
+        AskName
+    ]
+}
+
 @mcpTool
 @readonly
 operation Adder {
@@ -23,20 +37,6 @@ operation Adder {
 
         comment: String
     }
-}
-
-@mcpServerDefinition
-service MyServer {
-    operations: [
-        Adder
-    ]
-}
-
-@mcpClientDefinition
-service MyClient {
-    operations: [
-        AskName
-    ]
 }
 
 @mcpElicitation
