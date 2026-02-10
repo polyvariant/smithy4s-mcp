@@ -34,6 +34,7 @@ import modelcontextprotocol.ToolAnnotations
 import modelcontextprotocol.ToolSchema
 import modelcontextprotocol.ToolsCapability
 import smithy.api.Readonly
+import smithy4s.Bijection
 import smithy4s.Document
 import smithy4s.Hints
 import smithy4s.Service
@@ -41,6 +42,7 @@ import smithy4s.ShapeId
 import smithy4s.kinds.FunctorAlgebra
 import smithy4s.schema.Alt
 import smithy4s.schema.Alt.Dispatcher
+import smithy4s.schema.CollectionTag
 import smithy4s.schema.Field
 import smithy4s.schema.Primitive
 import smithy4s.schema.Schema
@@ -162,11 +164,12 @@ object McpBuilder {
       impl: Document => IO[Document],
     )
 
-    enum SSchema {
-      case ObjectSchema(properties: Map[String, SSchema], required: List[String])
-      case AnyOfSchema(options: List[SSchema])
+    enum JsonSchema {
+      case ObjectSchema(properties: Map[String, JsonSchema], required: List[String])
+      case AnyOfSchema(options: List[JsonSchema])
       case NumberSchema
       case StringSchema
+      case ListSchema(itemSchema: JsonSchema)
 
       def asDocument: Document =
         this match {
@@ -184,37 +187,56 @@ object McpBuilder {
             Document.obj(
               "anyOf" -> Document.array(options.map(_.asDocument))
             )
+          case ListSchema(itemSchema) =>
+            Document.obj(
+              "type" -> Document.fromString("array"),
+              "items" -> itemSchema.asDocument,
+            )
         }
 
     }
 
-    object SchemaDerivation extends SchemaVisitor.Default[[_] =>> SSchema] {
-      def default[A]: SSchema = ???
+    object SchemaDerivation extends SchemaVisitor.Default[[_] =>> JsonSchema] {
+      def default[A]: JsonSchema = ???
 
       override def union[U](
         shapeId: ShapeId,
         hints: Hints,
         alternatives: Vector[Alt[U, ?]],
         dispatch: Dispatcher[U],
-      ): SSchema = SSchema.AnyOfSchema(alternatives.toList.map(alt => alt.schema.compile(this)))
+      ): JsonSchema = JsonSchema.AnyOfSchema(
+        alternatives.toList.map(alt => alt.schema.compile(this))
+      )
 
-      override def primitive[P](shapeId: ShapeId, hints: Hints, tag: Primitive[P]): SSchema =
+      override def primitive[P](shapeId: ShapeId, hints: Hints, tag: Primitive[P]): JsonSchema =
         tag match {
-          case Primitive.PInt    => SSchema.NumberSchema
-          case Primitive.PString => SSchema.StringSchema
+          case Primitive.PInt    => JsonSchema.NumberSchema
+          case Primitive.PString => JsonSchema.StringSchema
           case _                 => ???
         }
 
-      override def option[A](schema: Schema[A]): SSchema = schema.compile(
+      override def biject[A, B](schema: Schema[A], bijection: Bijection[A, B]): JsonSchema = schema
+        .compile(
+          this
+        ) // just compile the underlying schema, the bijection doesn't change the JSON schema
+
+      override def option[A](schema: Schema[A]): JsonSchema = schema.compile(
         this
       ) // optionality handled on struct level
+
+      override def collection[C[_], A](
+        shapeId: ShapeId,
+        hints: Hints,
+        tag: CollectionTag[C],
+        member: Schema[A],
+      ): JsonSchema = JsonSchema.ListSchema(member.compile(this))
 
       override def struct[S](
         shapeId: ShapeId,
         hints: Hints,
         fields: Vector[Field[S, ?]],
         make: IndexedSeq[Any] => S,
-      ): SSchema = SSchema.ObjectSchema(
+      ): JsonSchema = JsonSchema.ObjectSchema(
         properties = fields.map(f => f.label -> f.schema.compile(this)).toMap,
         required = fields.filter(_.isRequired).map(_.label).toList,
       )
@@ -223,7 +245,7 @@ object McpBuilder {
 
     def deriveSchema[A: Schema]: ToolSchema =
       Schema[A].compile(SchemaDerivation) match {
-        case SSchema.ObjectSchema(properties, required) =>
+        case JsonSchema.ObjectSchema(properties, required) =>
           ToolSchema(
             _type = "object",
             properties = Some(Document.obj(properties.map(_ -> _.asDocument).toSeq)),

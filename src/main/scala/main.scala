@@ -3,8 +3,10 @@ package app
 import cats.effect.IO
 import cats.effect.IOApp
 import my.server.AdderOutput
+import my.server.ListNamesOutput
 import my.server.MyClient
 import my.server.MyServer
+import my.server.Name
 
 object main extends IOApp.Simple {
 
@@ -22,6 +24,12 @@ object main extends IOApp.Simple {
             result = a + b.getOrElse(0),
             Some(s"You're goddamn right, ${name.name}"),
           )
+
+        def listNames(): IO[ListNamesOutput] = IO.pure {
+          ListNamesOutput(
+            List("waltuh", "kid named finger").map(Name(_))
+          )
+        }
       }
 
     printErr("Starting server") *>

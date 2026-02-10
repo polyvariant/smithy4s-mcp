@@ -11,6 +11,7 @@ use smithy4smcptraits#mcpTool
 service MyServer {
     operations: [
         Adder
+        ListNames
     ]
 }
 
@@ -38,6 +39,21 @@ operation Adder {
         comment: String
     }
 }
+
+@mcpTool
+@readonly
+operation ListNames {
+    output := {
+        @required
+        names: Names
+    }
+}
+
+list Names {
+    member: Name
+}
+
+string Name
 
 @mcpElicitation
 @readonly
