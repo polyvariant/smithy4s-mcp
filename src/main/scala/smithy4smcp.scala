@@ -43,6 +43,10 @@ import smithy4s.kinds.FunctorAlgebra
 import smithy4s.schema.Alt
 import smithy4s.schema.Alt.Dispatcher
 import smithy4s.schema.CollectionTag
+import smithy4s.schema.EnumTag
+import smithy4s.schema.EnumTag.ClosedIntEnum
+import smithy4s.schema.EnumTag.ClosedStringEnum
+import smithy4s.schema.EnumValue
 import smithy4s.schema.Field
 import smithy4s.schema.Primitive
 import smithy4s.schema.Schema
@@ -170,6 +174,8 @@ object McpBuilder {
       case NumberSchema
       case StringSchema
       case ListSchema(itemSchema: JsonSchema)
+      case EnumSchema(options: List[String])
+      case IntEnumSchema(options: List[Int])
 
       def asDocument: Document =
         this match {
@@ -192,6 +198,16 @@ object McpBuilder {
               "type" -> Document.fromString("array"),
               "items" -> itemSchema.asDocument,
             )
+          case EnumSchema(options) =>
+            Document.obj(
+              "type" -> Document.fromString("string"),
+              "enum" -> Document.array(options.map(Document.fromString)),
+            )
+          case IntEnumSchema(options) =>
+            Document.obj(
+              "type" -> Document.fromString("integer"),
+              "enum" -> Document.array(options.map(Document.fromInt)),
+            )
         }
 
     }
@@ -213,6 +229,19 @@ object McpBuilder {
           case Primitive.PInt    => JsonSchema.NumberSchema
           case Primitive.PString => JsonSchema.StringSchema
           case _                 => ???
+        }
+
+      override def enumeration[E](
+        shapeId: ShapeId,
+        hints: Hints,
+        tag: EnumTag[E],
+        values: List[EnumValue[E]],
+        total: E => EnumValue[E],
+      ): JsonSchema =
+        tag match {
+          case ClosedIntEnum    => JsonSchema.IntEnumSchema(values.map(_.intValue))
+          case ClosedStringEnum => JsonSchema.EnumSchema(values.map(_.stringValue))
+          case _                => sys.error("Open enums are not supported")
         }
 
       override def biject[A, B](schema: Schema[A], bijection: Bijection[A, B]): JsonSchema = schema

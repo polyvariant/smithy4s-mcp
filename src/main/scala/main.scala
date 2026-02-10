@@ -3,7 +3,9 @@ package app
 import cats.effect.IO
 import cats.effect.IOApp
 import my.server.AdderOutput
-import my.server.ListNamesOutput
+import my.server.Character
+import my.server.CharacterType
+import my.server.ListCharactersOutput
 import my.server.MyClient
 import my.server.MyServer
 import my.server.Name
@@ -25,11 +27,17 @@ object main extends IOApp.Simple {
             Some(s"You're goddamn right, ${name.name}"),
           )
 
-        def listNames(): IO[ListNamesOutput] = IO.pure {
-          ListNamesOutput(
-            List("waltuh", "kid named finger").map(Name(_))
-          )
-        }
+        def listCharacters(): IO[ListCharactersOutput] =
+
+          IO.pure {
+            ListCharactersOutput {
+              List("waltuh", "kid named finger")
+                .map(
+                  Name(_)
+                )
+                .map(Character(_, CharacterType.BAD))
+            }
+          }
       }
 
     printErr("Starting server") *>

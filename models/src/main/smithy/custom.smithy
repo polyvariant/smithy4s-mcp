@@ -11,7 +11,7 @@ use smithy4smcptraits#mcpTool
 service MyServer {
     operations: [
         Adder
-        ListNames
+        ListCharacters
     ]
 }
 
@@ -42,15 +42,23 @@ operation Adder {
 
 @mcpTool
 @readonly
-operation ListNames {
+operation ListCharacters {
     output := {
         @required
-        names: Names
+        characters: Characters
     }
 }
 
-list Names {
-    member: Name
+list Characters {
+    member: Character
+}
+
+structure Character {
+    @required
+    name: Name
+
+    @required
+    type: CharacterType
 }
 
 string Name
@@ -69,4 +77,9 @@ operation AskName {
 
         extras: Integer
     }
+}
+
+enum CharacterType {
+    BAD
+    GOOD
 }
