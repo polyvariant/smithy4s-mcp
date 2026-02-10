@@ -26,8 +26,10 @@ import modelcontextprotocol.ListToolsResult
 import modelcontextprotocol.ServerCapabilities
 import modelcontextprotocol.TaskMetadata
 import modelcontextprotocol.Tool
+import modelcontextprotocol.ToolAnnotations
 import modelcontextprotocol.ToolSchema
 import modelcontextprotocol.ToolsCapability
+import smithy.api.Readonly
 import smithy4s.Document
 import smithy4s.Hints
 import smithy4s.Service
@@ -73,6 +75,12 @@ object McpServerBuilder {
                 outputSchema = Some(
                   deriveSchema(
                     using e.output
+                  )
+                ),
+                annotations = Some(
+                  ToolAnnotations(
+                    readOnlyHint = Some(e.hints.has[Readonly]),
+                    idempotentHint = Some(e.hints.has[smithy.api.Idempotent]),
                   )
                 ),
               ),

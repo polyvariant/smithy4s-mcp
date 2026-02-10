@@ -6,6 +6,7 @@ use smithy4smcptraits#mcpServerDefinition
 use smithy4smcptraits#mcpTool
 
 @mcpTool
+@readonly
 operation Adder {
     input := {
         @required
