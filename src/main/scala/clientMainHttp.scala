@@ -4,25 +4,24 @@ import cats.effect.ExitCode
 import cats.effect.IO
 import cats.effect.IOApp
 import cats.syntax.all.*
-import fs2.io.process.Processes
 import modelcontextprotocol.ClientCapabilities
 import modelcontextprotocol.Implementation
 import my.server.GithubMcpServer
-import smithy4smcptraits.McpClientApi
+import org.http4s.Uri
+import org.http4s.ember.client.EmberClientBuilder
 import smithy4smcptraits.McpServerApi
 
-object clientMain extends IOApp {
+object clientMainHttp extends IOApp {
 
   def run(args: List[String]): IO[ExitCode] =
+
     printErr("Starting client") *>
-      Processes[IO]
-        .spawn(fs2.io.process.ProcessBuilder(args.head, args.tail))
-        .flatMap { proc =>
-          interop
-            .startClient(
-              new McpClientApi.Default[IO](IO.stub),
-              proc,
-            )
+      EmberClientBuilder
+        .default[IO]
+        .build
+        // .map(Logger(logHeaders = true, logBody = true, logAction = Some(IO.println)))
+        .evalMap { httpClient =>
+          McpBuilder.httpClient(httpClient, Uri.unsafeFromString(args(0)))
         }
         .onFinalize(printErr("Terminating client"))
         .use { case given McpServerApi[IO] =>
@@ -45,6 +44,7 @@ object clientMain extends IOApp {
 
             }
         }
+        .adaptError { case e => new RuntimeException(s"Failed to run client: ${e.getMessage}", e) }
         .as(ExitCode.Success)
 
   def useGithub(github: GithubMcpServer[IO]) =

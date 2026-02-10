@@ -1,6 +1,8 @@
 package app
 
+import cats.effect.ExitCode
 import cats.effect.IO
+import cats.effect.IOApp
 import cats.effect.Resource
 import cats.syntax.all.*
 import com.github.plokhotnyuk.jsoniter_scala.circe.JsoniterScalaCodec.*
@@ -9,14 +11,19 @@ import io.circe.Decoder
 import io.circe.Encoder
 import io.circe.HCursor
 import io.circe.Json
+import io.circe.syntax.*
 import jsonrpclib.CallId
+import jsonrpclib.InputMessage.RequestMessage
 import jsonrpclib.JsonRpcPayload
+import jsonrpclib.JsonRpcRequest
 import jsonrpclib.Message
+import jsonrpclib.OutputMessage.ResponseMessage
 import jsonrpclib.Payload
 import jsonrpclib.ProtocolError
 import jsonrpclib.fs2.CancelTemplate
 import jsonrpclib.fs2.FS2Channel
 import jsonrpclib.fs2.given
+import jsonrpclib.smithy4sinterop.CirceJsonCodec
 import jsonrpclib.smithy4sinterop.ClientStub
 import jsonrpclib.smithy4sinterop.ServerEndpoints
 import modelcontextprotocol.CallToolResult
@@ -36,6 +43,17 @@ import modelcontextprotocol.Tool
 import modelcontextprotocol.ToolAnnotations
 import modelcontextprotocol.ToolSchema
 import modelcontextprotocol.ToolsCapability
+import my.server.GithubMcpServer
+import org.http4s.Header
+import org.http4s.Method
+import org.http4s.Request
+import org.http4s.ServerSentEvent
+import org.http4s.Uri
+import org.http4s.client.Client
+import org.http4s.ember.client.EmberClientBuilder
+import org.http4s.headers.Accept
+import org.http4s.headers.`Content-Type`
+import org.typelevel.ci.CIString
 import smithy.api.Readonly
 import smithy4s.Bijection
 import smithy4s.Document
@@ -441,6 +459,123 @@ object McpBuilder {
       }
     }
   }
+
+  def httpClient(rawClient: Client[IO], baseUrl: Uri): IO[McpServerApi[IO]] =
+    (IO.ref(0L), IO.ref(none[String]))
+      .tupled
+      .map { (callIdRef, sessionIdRef) =>
+        McpServerApi.impl(new McpServerApi.FunctorEndpointCompiler[IO] {
+          def apply[I, E, O, SI, SO](fa: McpServerApi.Endpoint[I, E, O, SI, SO]): I => IO[O] = {
+            val encodeIn = CirceJsonCodec.Encoder.fromSchema(fa.input)
+
+            val decodeOut = CirceJsonCodec.Decoder.fromSchema(fa.output)
+
+            { in =>
+              (callIdRef.getAndUpdate(_ + 1), sessionIdRef.get).tupled.flatMap {
+                (callId, sessionIdOpt) =>
+                  rawClient
+                    .run(
+                      Request[IO](method = Method.POST, uri = baseUrl)
+                        .withBodyStream(
+                          fs2
+                            .Stream
+                            .emits(
+                              {
+                                RequestMessage(
+                                  method = fa.hints.get[JsonRpcRequest].get.value,
+                                  callId = CallId.NumberId(callId),
+                                  params = Some(Payload(encodeIn(in))),
+                                ): Message
+                              }
+                                .asJson
+                                .noSpaces
+                                .getBytes()
+                            )
+                        )
+                        .withContentType(
+                          org
+                            .http4s
+                            .headers
+                            .`Content-Type`(org.http4s.MediaType.application.json)
+                        )
+                        .withHeaders(
+                          Accept(
+                            org.http4s.MediaType.application.json,
+                            org.http4s.MediaType.`text/event-stream`,
+                          ),
+                          sessionIdOpt.map(sid => Header.Raw(CIString("mcp-session-id"), sid)),
+                        )
+                    )
+                    .use { response =>
+                      val isStream = response
+                        .headers
+                        .get[`Content-Type`]
+                        .exists { ct =>
+                          ct.mediaType == org.http4s.MediaType.`text/event-stream`
+                        }
+
+                      val handleStream = response
+                        .body
+                        .through(ServerSentEvent.decoder[IO])
+                        // .evalTap { sse =>
+                        //   IO.println(s"SSE event: ${sse}")
+                        // }
+                        .collect { case ServerSentEvent(data = Some(bodyText)) => bodyText }
+                        .compile
+                        .toList
+                        .map(_.head) // consume everything but only keep first event
+
+                      val handleJson =
+                        response
+                          .bodyText
+                          .compile
+                          .string
+
+                      def decodeResponseText(txt: String) = io
+                        .circe
+                        .parser
+                        .decode[Message](txt)
+                        .liftTo[IO]
+                        .adaptError { case e =>
+                          new RuntimeException(
+                            s"Failed to decode JSON-RPC message: ${e.getMessage}, from ${txt}",
+                            e,
+                          )
+                        }
+                        .flatMap { msg =>
+                          msg match {
+                            case ResponseMessage(callId, data) =>
+                              decodeOut
+                                .decodeJson(data.data)
+                                .liftTo[IO]
+                                .adaptError { case e =>
+                                  new RuntimeException(
+                                    s"Failed to decode response for call $callId: ${e.getMessage}",
+                                    e,
+                                  )
+                                }
+                          }
+                        }
+
+                      response
+                        .headers
+                        .get(CIString("mcp-session-id"))
+                        .map(_.head.value)
+                        .traverseVoid(_.some.pipe(sessionIdRef.set)) *>
+                        {
+                          if isStream then handleStream
+                          else
+                            handleJson
+                        }.flatMap(decodeResponseText)
+                          .adaptError { case e =>
+                            new RuntimeException(s"HTTP request failed: ${e.getMessage}", e)
+                          }
+                    }
+              }
+            }
+          }
+        })
+      }
 
 }
 

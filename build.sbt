@@ -22,6 +22,9 @@ lazy val root = project
       "tech.neander" %% "jsonrpclib-smithy4s" % "0.1.0",
       "co.fs2" %% "fs2-io" % "3.12.2",
       "org.typelevel" %% "cats-effect" % "3.6.3",
+      "com.disneystreaming.smithy4s" %% "smithy4s-http4s" % smithy4sVersion.value,
+      "org.http4s" %% "http4s-ember-client" % "0.23.33",
+      "io.circe" %% "circe-parser" % "0.14.15",
     ),
     run / fork := true,
     scalacOptions ++= Seq(
