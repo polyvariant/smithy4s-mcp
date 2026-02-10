@@ -2,17 +2,6 @@ package app
 
 import cats.effect.IO
 import cats.syntax.all.*
-import com.anthropic.mcp.CallToolResult
-import com.anthropic.mcp.ClientCapabilities
-import com.anthropic.mcp.Cursor
-import com.anthropic.mcp.Implementation
-import com.anthropic.mcp.InitializeResult
-import com.anthropic.mcp.ListToolsResult
-import com.anthropic.mcp.ServerCapabilities
-import com.anthropic.mcp.TaskMetadata
-import com.anthropic.mcp.Tool
-import com.anthropic.mcp.ToolSchema
-import com.anthropic.mcp.ToolsCapability
 import com.github.plokhotnyuk.jsoniter_scala.circe.JsoniterScalaCodec.*
 import com.github.plokhotnyuk.jsoniter_scala.core.*
 import fs2.Stream
@@ -28,7 +17,17 @@ import jsonrpclib.fs2.CancelTemplate
 import jsonrpclib.fs2.FS2Channel
 import jsonrpclib.fs2.given
 import jsonrpclib.smithy4sinterop.ServerEndpoints
-import my.server.MyMcpServer
+import modelcontextprotocol.CallToolResult
+import modelcontextprotocol.ClientCapabilities
+import modelcontextprotocol.Cursor
+import modelcontextprotocol.Implementation
+import modelcontextprotocol.InitializeResult
+import modelcontextprotocol.ListToolsResult
+import modelcontextprotocol.ServerCapabilities
+import modelcontextprotocol.TaskMetadata
+import modelcontextprotocol.Tool
+import modelcontextprotocol.ToolSchema
+import modelcontextprotocol.ToolsCapability
 import smithy4s.Document
 import smithy4s.Hints
 import smithy4s.Service
@@ -38,18 +37,21 @@ import smithy4s.schema.Field
 import smithy4s.schema.Primitive
 import smithy4s.schema.Schema
 import smithy4s.schema.SchemaVisitor
-import smithy4smcp.internal.*
+import smithy4smcptraits.McpServerApi
+import smithy4smcptraits.McpTool
 import util.chaining.*
 
 import scala.collection.immutable.ListMap
 
-object smithy4smcp {
+import McpServerBuilder.internal.*
 
-  def srv[Alg[_[_, _, _, _, _]]](
+object McpServerBuilder {
+
+  def build[Alg[_[_, _, _, _, _]]](
     impl: FunctorAlgebra[Alg, IO]
   )(
     using service: Service[Alg]
-  ): MyMcpServer[IO] =
+  ): McpServerApi[IO] =
     new {
 
       val allMyMonkeysCompiled: ListMap[String, CompiledTool] = {
@@ -57,7 +59,7 @@ object smithy4smcp {
 
         service
           .endpoints
-          .filter(_.hints.has[my.server.Tool])
+          .filter(_.hints.has[McpTool])
           .map { e =>
             val decodeIn = Document.Decoder.fromSchema(e.input)
             val encodeOut = Document.Encoder.fromSchema(e.output)
@@ -200,7 +202,11 @@ object smithy4smcp {
 
   }
 
-  def start(srv: MyMcpServer[IO]) = FS2Channel
+}
+
+object interop {
+
+  def start(srv: McpServerApi[IO]): Stream[IO, Nothing] = FS2Channel
     .stream[IO](cancelTemplate = Some(cancelEndpoint))
     .flatMap { channel =>
       // Stream.eval(IO.fromEither(ClientStub(TestClient, channel))).flatMap { testClient =>
@@ -265,11 +271,12 @@ object smithy4smcp {
   val encode: fs2.Pipe[IO, Message, Byte] =
     _.map(Encoder[Message].apply(_).noSpaces + "\n").through(fs2.text.utf8.encode[IO])
 
-  def printErr(s: String): IO[Unit] = IO.consoleForIO.errorln(s)
-  // *> Files[IO]
-  //   .writeAll(fs2.io.file.Path("debug.log"))
-  //   .apply(fs2.Stream.emit(s + "\n").through(fs2.text.utf8.encode))
-  //   .compile
-  //   .drain
-
 }
+
+def printErr(s: String): IO[Unit] = IO.consoleForIO.errorln(s)
+
+// *> Files[IO]
+//   .writeAll(fs2.io.file.Path("debug.log"))
+//   .apply(fs2.Stream.emit(s + "\n").through(fs2.text.utf8.encode))
+//   .compile
+//   .drain

@@ -13,6 +13,7 @@ lazy val models = project
 
 lazy val root = project
   .in(file("."))
+  .aggregate(models)
   .dependsOn(models)
   .settings(
     name := "mcp-notes",

@@ -2,16 +2,15 @@ package app
 
 import cats.effect.IO
 import cats.effect.IOApp
-import com.anthropic.mcp.ClientCapabilities
-import com.anthropic.mcp.Implementation
-import com.anthropic.mcp.InitializeResult
-import com.anthropic.mcp.ServerCapabilities
-import com.anthropic.mcp.ToolsCapability
+import modelcontextprotocol.ClientCapabilities
+import modelcontextprotocol.Implementation
+import modelcontextprotocol.InitializeResult
+import modelcontextprotocol.ServerCapabilities
+import modelcontextprotocol.ToolsCapability
 import my.server.AdderOutput
-import my.server.MyMcpServer
 import my.server.MyServer
 import smithy4s.Document
-import smithy4smcp.*
+import smithy4smcptraits.McpServerApi
 
 object main extends IOApp.Simple {
 
@@ -25,16 +24,17 @@ object main extends IOApp.Simple {
       }
 
     printErr("Starting server") *>
-      start(customize(srv(myTools)))
+      interop
+        .start(customize(McpServerBuilder.build(myTools)))
         .compile
         .drain
         .guarantee(printErr("Terminating server"))
   }
 
   def customize(
-    server: MyMcpServer[IO]
-  ): MyMcpServer[IO] =
-    new MyMcpServer[IO] {
+    server: McpServerApi[IO]
+  ): McpServerApi[IO] =
+    new McpServerApi[IO] {
       export server.{initialize as _, *}
 
       def initialize(

@@ -1,6 +1,6 @@
 $version: "2"
 
-namespace com.anthropic.mcp
+namespace modelcontextprotocol
 
 use alloy#discriminated
 use alloy#jsonUnknown
