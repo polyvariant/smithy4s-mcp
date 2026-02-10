@@ -11,6 +11,7 @@ import io.circe.HCursor
 import io.circe.Json
 import io.circe.syntax.*
 import jsonrpclib.CallId
+import jsonrpclib.InputMessage.NotificationMessage
 import jsonrpclib.InputMessage.RequestMessage
 import jsonrpclib.JsonRpcPayload
 import jsonrpclib.JsonRpcRequest
@@ -625,6 +626,14 @@ object interop {
                       .apply(HCursor.fromJson(payload.data))
                       .left
                       .map(e => ProtocolError.ParseError(e.getMessage))
+                      .map {
+                        // workaround for some clients (like Claude Code) sending requests/notifications with no body.
+                        case rm @ RequestMessage(params = None) =>
+                          rm.copy(params = Some(Payload(Json.obj())))
+                        case nm @ NotificationMessage(params = None) =>
+                          nm.copy(params = Some(Payload(Json.obj())))
+                        case other => other
+                      }
                   }
               }
               // .observe(
