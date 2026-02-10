@@ -29,6 +29,14 @@ service McpServerApi {
         Initialize
         ListTools
         CallTool
+        Ping
+    ]
+}
+
+@jsonRpc
+service McpClientApi {
+    operations: [
+        Ping
     ]
 }
 
@@ -49,3 +57,6 @@ operation CallTool {
     input: CallToolRequestParams
     output: CallToolResult
 }
+
+@jsonRpcRequest("ping")
+operation Ping {}

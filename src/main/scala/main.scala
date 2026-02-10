@@ -10,17 +10,22 @@ import modelcontextprotocol.ToolsCapability
 import my.server.AdderOutput
 import my.server.MyServer
 import smithy4s.Document
+import smithy4smcptraits.McpClientApi
 import smithy4smcptraits.McpServerApi
 
 object main extends IOApp.Simple {
 
   def run: IO[Unit] = {
 
-    val myTools: MyServer[IO] =
+    def myTools(
+      using client: McpClientApi[IO]
+    ): MyServer[IO] =
       new {
-        def adder(a: Int, b: Option[Int]): IO[AdderOutput] = IO.pure(
-          AdderOutput(result = a + b.getOrElse(0))
-        )
+        def adder(a: Int, b: Option[Int]): IO[AdderOutput] =
+          client.ping() *>
+            IO.pure(
+              AdderOutput(result = a + b.getOrElse(0))
+            )
       }
 
     printErr("Starting server") *>

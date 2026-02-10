@@ -16,6 +16,7 @@ import jsonrpclib.ProtocolError
 import jsonrpclib.fs2.CancelTemplate
 import jsonrpclib.fs2.FS2Channel
 import jsonrpclib.fs2.given
+import jsonrpclib.smithy4sinterop.ClientStub
 import jsonrpclib.smithy4sinterop.ServerEndpoints
 import modelcontextprotocol.CallToolResult
 import modelcontextprotocol.ClientCapabilities
@@ -39,6 +40,7 @@ import smithy4s.schema.Field
 import smithy4s.schema.Primitive
 import smithy4s.schema.Schema
 import smithy4s.schema.SchemaVisitor
+import smithy4smcptraits.McpClientApi
 import smithy4smcptraits.McpServerApi
 import smithy4smcptraits.McpTool
 import util.chaining.*
@@ -55,6 +57,7 @@ object McpServerBuilder {
     using service: Service[Alg]
   ): McpServerApi[IO] =
     new {
+      def ping(): IO[Unit] = IO.unit
 
       val allMyMonkeysCompiled: ListMap[String, CompiledTool] = {
         val fk = service.toPolyFunction(impl)
@@ -214,14 +217,24 @@ object McpServerBuilder {
 
 object interop {
 
-  def start(srv: McpServerApi[IO]): Stream[IO, Nothing] = FS2Channel
+  def start(srv: McpClientApi[IO] ?=> McpServerApi[IO]): Stream[IO, Nothing] = FS2Channel
     .stream[IO](cancelTemplate = Some(cancelEndpoint))
     .flatMap { channel =>
-      // Stream.eval(IO.fromEither(ClientStub(TestClient, channel))).flatMap { testClient =>
-      Stream.eval(IO.fromEither(ServerEndpoints(srv))).flatMap { se =>
-        channel.withEndpointsStream(se)
+      Stream.eval(IO.fromEither(ClientStub(McpClientApi, channel))).flatMap { client =>
+        Stream
+          .eval(
+            IO.fromEither(
+              ServerEndpoints(
+                srv(
+                  using client
+                )
+              )
+            )
+          )
+          .flatMap { se =>
+            channel.withEndpointsStream(se)
+          }
       }
-      // }
     }
     .flatMap { channel =>
       fs2
