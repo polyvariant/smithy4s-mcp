@@ -29,7 +29,7 @@ object main extends IOApp.Simple {
         .start(
           McpBuilder.server(
             myTools(
-              using McpBuilder.client(MyClient)
+              using McpBuilder.clientStub(MyClient)
             )
           )
         )

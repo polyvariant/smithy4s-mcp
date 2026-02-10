@@ -234,7 +234,7 @@ object McpBuilder {
 
   }
 
-  def client[Alg[_[_, _, _, _, _]]](
+  def clientStub[Alg[_[_, _, _, _, _]]](
     service: Service[Alg]
   )(
     using rawClient: McpClientApi[IO]
