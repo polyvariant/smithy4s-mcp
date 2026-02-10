@@ -31,7 +31,7 @@ object main extends IOApp.Simple {
 
           IO.pure {
             ListCharactersOutput {
-              List("waltuh", "kid named finger")
+              List("walter", "mike")
                 .map(
                   Name(_)
                 )
