@@ -92,7 +92,7 @@ object smithy4smcp {
         clientInfo: Implementation,
         _meta: Option[Map[String, Document]],
       ): IO[InitializeResult] =
-        printErr("initialize called") *>
+        printErr("default initialize called") *>
           IO.pure(
             InitializeResult(
               protocolVersion = "2025-11-25",
