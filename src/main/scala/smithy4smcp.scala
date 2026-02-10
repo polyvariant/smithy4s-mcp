@@ -33,8 +33,6 @@ import modelcontextprotocol.Tool
 import modelcontextprotocol.ToolAnnotations
 import modelcontextprotocol.ToolSchema
 import modelcontextprotocol.ToolsCapability
-import my.server.AskNameOutput
-import my.server.MyClient
 import smithy.api.Readonly
 import smithy4s.Document
 import smithy4s.Hints
@@ -46,6 +44,7 @@ import smithy4s.schema.Alt.Dispatcher
 import smithy4s.schema.Field
 import smithy4s.schema.Primitive
 import smithy4s.schema.Schema
+import smithy4s.schema.Schema.StructSchema
 import smithy4s.schema.SchemaVisitor
 import smithy4smcptraits.McpClientApi
 import smithy4smcptraits.McpServerApi
@@ -54,37 +53,17 @@ import util.chaining.*
 
 import scala.collection.immutable.ListMap
 
-import McpServerBuilder.internal.*
+import McpBuilder.internal.*
 
-object McpServerBuilder {
+object McpBuilder {
 
-  def build[Alg[_[_, _, _, _, _]]](
-    // todo: abstract away client type
-    impl: MyClient[IO] ?=> FunctorAlgebra[Alg, IO]
+  def server[Alg[_[_, _, _, _, _]]](
+    impl: FunctorAlgebra[Alg, IO]
   )(
-    using service: Service[Alg],
-    rawClient: McpClientApi[IO],
+    using service: Service[Alg]
   ): McpServerApi[IO] =
     new {
       def ping(): IO[Unit] = IO.unit
-
-      given MyClient[IO] =
-        new {
-          def askName(message: String): IO[AskNameOutput] = rawClient
-            .elicitation(
-              ElicitRequestParams.form(
-                form = ElicitRequestFormParams(
-                  message = "message",
-                  requestedSchema = ElicitFormSchema(
-                    _type = "object",
-                    properties = deriveSchema[AskNameOutput].properties.get,
-                    required = deriveSchema[AskNameOutput].required,
-                  ),
-                )
-              )
-            )
-            .flatMap(_.content.get.decode[AskNameOutput].liftTo[IO])
-        }
 
       val allMyMonkeysCompiled: ListMap[String, CompiledTool] = {
         val fk = service.toPolyFunction(impl)
@@ -253,6 +232,72 @@ object McpServerBuilder {
         case _ => sys.error("Only object schemas are supported on the top level")
       }
 
+  }
+
+  def client[Alg[_[_, _, _, _, _]]](
+    service: Service[Alg]
+  )(
+    using rawClient: McpClientApi[IO]
+  ): service.Impl[IO] = service.impl {
+    new service.FunctorEndpointCompiler[IO] {
+      def apply[I, E, O, SI, SO](fa: service.Endpoint[I, E, O, SI, SO]): I => IO[O] = {
+
+        val messageFinder: Option[I => String] =
+          fa.input match {
+            case StructSchema(shapeId, hints, fields, make) =>
+              fields.find(_.label == "message").map { field =>
+                val toDoc = Document.Encoder.fromSchema(field.schema)
+                field
+                  .get
+                  .andThen { a =>
+                    toDoc.encode(a) match {
+                      case Document.DString(s) => s
+                      case _ => sys.error("Expected the 'message' field to be a string")
+                    }
+                  }
+              }
+
+            case _ => None
+          }
+
+        val inputToMessage = messageFinder.getOrElse(
+          Function.const(s"Server is asking (${fa.id.name})")
+        )
+
+        val requestedSchema = {
+          val compiled = deriveSchema(
+            using fa.output
+          )
+          ElicitFormSchema(
+            _type = "object",
+            properties = compiled.properties.get,
+            required = compiled.required,
+          )
+        }
+
+        val resultDecoder = Document.Decoder.fromSchema(fa.output)
+
+        { i =>
+          rawClient
+            .elicitation(
+              ElicitRequestParams.form(
+                form = ElicitRequestFormParams(
+                  message = inputToMessage(i),
+                  requestedSchema = requestedSchema,
+                )
+              )
+            )
+            .flatMap(
+              _.content
+                .get
+                .decode(
+                  using resultDecoder
+                )
+                .liftTo[IO]
+            )
+        }
+      }
+    }
   }
 
 }

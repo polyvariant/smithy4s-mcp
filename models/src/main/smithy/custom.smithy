@@ -50,5 +50,7 @@ operation AskName {
     output := {
         @required
         name: String
+
+        extras: Integer
     }
 }
