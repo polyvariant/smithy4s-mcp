@@ -42,16 +42,15 @@ object main extends IOApp.Simple {
 
     printErr("Starting server") *>
       interop
-        .start(
+        .startServer(
           McpBuilder.server(
             myTools(
               using McpBuilder.clientStub(MyClient)
             )
           )
         )
-        .compile
-        .drain
-        .guarantee(printErr("Terminating server"))
+        .onFinalize(printErr("Terminating server"))
+        .useForever
   }
 
 }

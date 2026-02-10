@@ -1,10 +1,12 @@
 package app
 
 import cats.effect.IO
+import cats.effect.Resource
 import cats.syntax.all.*
 import com.github.plokhotnyuk.jsoniter_scala.circe.JsoniterScalaCodec.*
 import com.github.plokhotnyuk.jsoniter_scala.core.*
 import fs2.Stream
+import fs2.io.process.Processes
 import io.circe.Decoder
 import io.circe.Encoder
 import io.circe.HCursor
@@ -355,60 +357,67 @@ object McpBuilder {
 
 object interop {
 
-  def start(srv: McpClientApi[IO] ?=> McpServerApi[IO]): Stream[IO, Nothing] = FS2Channel
-    .stream[IO](cancelTemplate = Some(cancelEndpoint))
+  def startServer(srv: McpClientApi[IO] ?=> McpServerApi[IO]): Resource[IO, McpClientApi[IO]] =
+    startGen(srv, fs2.io.stdin[IO](512), fs2.io.stdout[IO])
+
+  def startClient(c: McpServerApi[IO] ?=> McpClientApi[IO], process: fs2.io.process.Process[IO])
+    : Resource[IO, McpServerApi[IO]] = startGen(c, process.stdout, process.stdin)
+
+  def startGen[Local[_[_, _, _, _, _]], Remote[_[_, _, _, _, _]]](
+    srv: FunctorAlgebra[Remote, IO] ?=> FunctorAlgebra[Local, IO],
+    input: fs2.Stream[IO, Byte],
+    output: fs2.Pipe[IO, Byte, Nothing],
+  )(
+    using Local: Service[Local],
+    Remote: Service[Remote],
+  ): Resource[IO, Remote.Impl[IO]] = FS2Channel
+    .resource[IO](cancelTemplate = Some(cancelEndpoint))
     .flatMap { channel =>
-      Stream.eval(IO.fromEither(ClientStub(McpClientApi, channel))).flatMap { client =>
-        Stream
-          .eval(
-            IO.fromEither(
-              ServerEndpoints(
-                srv(
-                  using client
-                )
-              )
-            )
+      ClientStub(Remote, channel).liftTo[IO].toResource.flatMap { client =>
+        ServerEndpoints(
+          srv(
+            using client
           )
+        ).liftTo[IO]
+          .toResource
           .flatMap { se =>
-            channel.withEndpointsStream(se)
+            channel.withEndpoints(se)
+          }
+          .flatMap { channel =>
+            input
+              // .observe(_.through(Files[IO].writeAll(fs2.io.file.Path("input.log"))))
+              .through {
+                _.through(fs2.text.utf8.decode[IO])
+                  .through(fs2.text.lines[IO])
+                  .map { line =>
+                    Payload(readFromArray[Json](line.getBytes()))
+                  }
+                  .map { payload =>
+                    Decoder[Message]
+                      .apply(HCursor.fromJson(payload.data))
+                      .left
+                      .map(e => ProtocolError.ParseError(e.getMessage))
+                  }
+              }
+              // .observe(
+              // _.map(_.toString).through(Files[IO].writeUtf8(fs2.io.file.Path("decoded.log")))
+              // )
+              .through(channel.inputOrBounce)
+              .compile
+              .drain
+              .background &> (
+              channel
+                .output
+                .through(encode)
+                // .observe(_.through(Files[IO].writeAll(fs2.io.file.Path("output.log"))))
+                .through(output)
+                .compile
+                .drain
+                .background
+                .as(client)
+            )
           }
       }
-    }
-    .flatMap { channel =>
-      fs2
-        .Stream
-        .eval(IO.never) // running the server forever
-        .concurrently(
-          fs2
-            .io
-            .stdin[IO](512)
-            // .observe(_.through(Files[IO].writeAll(fs2.io.file.Path("input.log"))))
-            .through {
-              _.through(fs2.text.utf8.decode[IO])
-                .through(fs2.text.lines[IO])
-                .map { line =>
-                  Payload(readFromArray[Json](line.getBytes()))
-                }
-                .map { payload =>
-                  Decoder[Message]
-                    .apply(HCursor.fromJson(payload.data))
-                    .left
-                    .map(e => ProtocolError.ParseError(e.getMessage))
-                }
-
-            }
-            // .observe(
-            // _.map(_.toString).through(Files[IO].writeUtf8(fs2.io.file.Path("decoded.log")))
-            // )
-            .through(channel.inputOrBounce)
-        )
-        .concurrently(
-          channel
-            .output
-            .through(encode)
-            // .observe(_.through(Files[IO].writeAll(fs2.io.file.Path("output.log"))))
-            .through(fs2.io.stdout[IO])
-        )
     }
 
   // Reserving a method for cancelation.
