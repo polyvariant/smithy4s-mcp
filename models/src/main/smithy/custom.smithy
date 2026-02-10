@@ -2,6 +2,7 @@ $version: "2"
 
 namespace my.server
 
+use jsonrpclib#jsonRpcPayload
 use smithy4smcptraits#mcpClientDefinition
 use smithy4smcptraits#mcpElicitation
 use smithy4smcptraits#mcpServerDefinition
@@ -82,4 +83,46 @@ operation AskName {
 enum CharacterType {
     BAD
     GOOD
+}
+
+@mcpServerDefinition
+service GithubMcpServer {
+    operations: [
+        GetMe
+        ListPullRequests
+    ]
+}
+
+@mcpTool(name: "get_me")
+operation GetMe {
+    output := {
+        @required
+        login: String
+    }
+}
+
+@mcpTool(name: "list_pull_requests")
+operation ListPullRequests {
+    input := {
+        @required
+        owner: String
+
+        @required
+        repo: String
+    }
+
+    output := {
+        @jsonRpcPayload
+        @required
+        prs: PullRequests
+    }
+}
+
+list PullRequests {
+    member: PullRequest
+}
+
+structure PullRequest {
+    @required
+    title: String
 }

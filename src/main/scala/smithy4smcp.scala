@@ -5,13 +5,12 @@ import cats.effect.Resource
 import cats.syntax.all.*
 import com.github.plokhotnyuk.jsoniter_scala.circe.JsoniterScalaCodec.*
 import com.github.plokhotnyuk.jsoniter_scala.core.*
-import fs2.Stream
-import fs2.io.process.Processes
 import io.circe.Decoder
 import io.circe.Encoder
 import io.circe.HCursor
 import io.circe.Json
 import jsonrpclib.CallId
+import jsonrpclib.JsonRpcPayload
 import jsonrpclib.Message
 import jsonrpclib.Payload
 import jsonrpclib.ProtocolError
@@ -22,6 +21,8 @@ import jsonrpclib.smithy4sinterop.ClientStub
 import jsonrpclib.smithy4sinterop.ServerEndpoints
 import modelcontextprotocol.CallToolResult
 import modelcontextprotocol.ClientCapabilities
+import modelcontextprotocol.ContentBlock
+import modelcontextprotocol.ContentBlock.TextCase
 import modelcontextprotocol.Cursor
 import modelcontextprotocol.ElicitFormSchema
 import modelcontextprotocol.ElicitRequestFormParams
@@ -38,6 +39,7 @@ import modelcontextprotocol.ToolsCapability
 import smithy.api.Readonly
 import smithy4s.Bijection
 import smithy4s.Document
+import smithy4s.Endpoint
 import smithy4s.Hints
 import smithy4s.Service
 import smithy4s.ShapeId
@@ -53,7 +55,9 @@ import smithy4s.schema.Field
 import smithy4s.schema.Primitive
 import smithy4s.schema.Schema
 import smithy4s.schema.Schema.StructSchema
+import smithy4s.schema.Schema.UnionSchema
 import smithy4s.schema.SchemaVisitor
+import smithy4s.~>
 import smithy4smcptraits.McpClientApi
 import smithy4smcptraits.McpServerApi
 import smithy4smcptraits.McpTool
@@ -80,12 +84,19 @@ object McpBuilder {
           .endpoints
           .filter(_.hints.has[McpTool])
           .map { e =>
+            val toolHint = e
+              .hints
+              .get[McpTool]
+              .getOrElse(
+                sys.error(s"Endpoint ${e.id} is not a tool, we can't compile it")
+              )
+
             val decodeIn = Document.Decoder.fromSchema(e.input)
             val encodeOut = Document.Encoder.fromSchema(e.output)
 
             CompiledTool(
               Tool(
-                name = e.name,
+                name = toolName(toolHint, e),
                 inputSchema = deriveSchema(
                   using e.input
                 ),
@@ -286,6 +297,84 @@ object McpBuilder {
       }
 
   }
+
+  def remoteServerStub[Alg[_[_, _, _, _, _]]](
+    service: Service[Alg]
+  )(
+    using rawServer: McpServerApi[IO]
+  ): service.Impl[IO] = service.impl {
+    new service.FunctorEndpointCompiler[IO] {
+      def apply[I, E, O, SI, SO](e: service.Endpoint[I, E, O, SI, SO]): I => IO[O] = {
+        val toolHint = e
+          .hints
+          .get[McpTool]
+          .getOrElse(
+            sys.error(
+              s"Endpoint ${e.id} is not a tool, we can't derive a client for it"
+            )
+          )
+
+        val inputEncoder = Document.Encoder.fromSchema(e.input)
+        val resultDecoder = Document.Decoder.fromSchema(JsonPayloadTransformation(e.output))
+
+        i =>
+          rawServer
+            .callTool(name = toolName(toolHint, e), arguments = inputEncoder.encode(i).some)
+            .flatMap {
+              case CallToolResult(structuredContent = Some(content)) =>
+                content
+                  .decode(
+                    using resultDecoder
+                  )
+                  .liftTo[IO]
+
+              // Best-effort JSON decoding from unstructured content.
+              // The github MCP doesn't use structured responses, for example, so we shouldn't be typing them
+              // but I figured for the example's sake there's no reason not to at least try.
+              case CallToolResult(content = content) =>
+
+                val docs = content
+                  .map {
+                    case TextCase(text) => text.text
+                    case other          =>
+                      sys.error(
+                        s"Only text content blocks are supported in this context. Got ${ContentBlock.schema.asInstanceOf[UnionSchema[?]].alternatives(other.$ordinal).label}."
+                      )
+                  }
+                  .map { text =>
+                    smithy4s.json.Json.readDocument(text).getOrElse(Document.fromString(text))
+                  }
+
+                docs match {
+                  case one :: Nil => resultDecoder.decode(one).liftTo[IO]
+                  case _          => resultDecoder.decode(Document.array(docs)).liftTo[IO]
+                }
+
+            }
+      }
+    }
+  }
+
+  // TODO: publish this from jsonrpclib
+  private object JsonPayloadTransformation extends (Schema ~> Schema) {
+
+    def apply[A0](fa: Schema[A0]): Schema[A0] =
+      fa match {
+        case struct: StructSchema[b] =>
+          struct
+            .fields
+            .collectFirst {
+              case field if field.hints.has[JsonRpcPayload] =>
+                field.schema.biject[b]((f: Any) => struct.make(Vector(f)))(field.get)
+            }
+            .getOrElse(fa)
+        case _ => fa
+      }
+
+  }
+
+  private def toolName[Op[_, _, _, _, _]](toolHint: McpTool, e: Endpoint[Op, ?, ?, ?, ?, ?])
+    : String = toolHint.name.getOrElse(e.id.name)
 
   def clientStub[Alg[_[_, _, _, _, _]]](
     service: Service[Alg]

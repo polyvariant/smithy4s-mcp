@@ -32,8 +32,11 @@ structure mcpServerDefinition {}
 })
 structure mcpClientDefinition {}
 
-@trait
-structure mcpTool {}
+@trait(selector: "service[trait|smithy4smcptraits#mcpServerDefinition] ~>")
+structure mcpTool {
+    /// Optional tool name. If not provided, the operation name will be used as the tool name.
+    name: String
+}
 
 // inputs of operations with this trait MUST NOT have any members that aren't "message"
 @trait

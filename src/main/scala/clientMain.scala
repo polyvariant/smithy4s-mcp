@@ -3,10 +3,13 @@ package app
 import cats.effect.ExitCode
 import cats.effect.IO
 import cats.effect.IOApp
+import cats.syntax.all.*
 import fs2.io.process.Processes
 import modelcontextprotocol.ClientCapabilities
 import modelcontextprotocol.Implementation
+import my.server.GithubMcpServer
 import smithy4smcptraits.McpClientApi
+import smithy4smcptraits.McpServerApi
 
 object clientMain extends IOApp {
 
@@ -23,24 +26,34 @@ object clientMain extends IOApp {
             )
         }
         .onFinalize(printErr("Terminating client"))
-        .use { remote =>
-          remote
+        .use { case given McpServerApi[IO] =>
+
+          McpServerApi[IO]
             .initialize(
               protocolVersion = "2025-11-25",
               capabilities = ClientCapabilities(),
               clientInfo = Implementation(name = "smithy4s-mcp-client", "0.0.0"),
             )
-            .flatMap { result =>
+            .flatMap { initResult =>
               printErr(
-                s"Connected to server: ${result.serverInfo.name} ${result.serverInfo.version}\n"
-              )
-            } *>
-            remote
-              .listTools()
-              .flatMap { result =>
-                printErr(s"Available tools: ${result.tools.map(_.name).mkString("\n", "\n", "")}")
-              }
+                s"Initialized with: ${initResult.serverInfo.name} ${initResult.serverInfo.version}"
+              ) *>
+                McpServerApi[IO].listTools().flatMap { tools =>
+                  printErr(s"Available tools: ${tools.tools.map(_.name).mkString(", ")}")
+                } *>
+                useGithub(McpBuilder.remoteServerStub(GithubMcpServer))
+                  .whenA(initResult.serverInfo.name == "github-mcp-server")
+
+            }
         }
         .as(ExitCode.Success)
+
+  def useGithub(github: GithubMcpServer[IO]) =
+    github.getMe().flatMap { me =>
+      printErr(s"Github MCP Server says you are: ${me.login}")
+    } *>
+      github.listPullRequests("disneystreaming", "smithy4s").flatMap { prs =>
+        printErr(s"Smithy4s PRs: ${prs.prs.map(_.title).mkString("\n\n", "\n", "")}")
+      }
 
 }
