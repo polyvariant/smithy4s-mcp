@@ -3,10 +3,10 @@ $version: "2"
 namespace my.server
 
 use jsonrpclib#jsonRpcPayload
-use smithy4smcptraits#mcpClientDefinition
-use smithy4smcptraits#mcpElicitation
-use smithy4smcptraits#mcpServerDefinition
-use smithy4smcptraits#mcpTool
+use mcptraits#mcpClientDefinition
+use mcptraits#mcpElicitation
+use mcptraits#mcpServerDefinition
+use mcptraits#mcpTool
 
 @mcpServerDefinition
 service MyServer {

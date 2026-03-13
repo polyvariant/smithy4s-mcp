@@ -25,6 +25,9 @@ import jsonrpclib.fs2.given
 import jsonrpclib.smithy4sinterop.CirceJsonCodec
 import jsonrpclib.smithy4sinterop.ClientStub
 import jsonrpclib.smithy4sinterop.ServerEndpoints
+import mcptraits.McpClientApi
+import mcptraits.McpServerApi
+import mcptraits.McpTool
 import modelcontextprotocol.CallToolResult
 import modelcontextprotocol.ClientCapabilities
 import modelcontextprotocol.ContentBlock
@@ -73,9 +76,6 @@ import smithy4s.schema.Schema.StructSchema
 import smithy4s.schema.Schema.UnionSchema
 import smithy4s.schema.SchemaVisitor
 import smithy4s.~>
-import smithy4smcptraits.McpClientApi
-import smithy4smcptraits.McpServerApi
-import smithy4smcptraits.McpTool
 import util.chaining.*
 
 import scala.collection.immutable.ListMap

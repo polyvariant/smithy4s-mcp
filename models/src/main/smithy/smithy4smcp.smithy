@@ -1,6 +1,6 @@
 $version: "2"
 
-namespace smithy4smcptraits
+namespace mcptraits
 
 use jsonrpclib#jsonRpc
 use jsonrpclib#jsonRpcPayload
@@ -19,7 +19,7 @@ use modelcontextprotocol#PaginatedRequestParams
 )
 @trait
 @traitValidators({
-    AllOpsAreTools: { selector: "~> operation:not([trait|smithy4smcptraits#mcpTool])", message: "All operations of MCP services must be tools" }
+    AllOpsAreTools: { selector: "~> operation:not([trait|mcptraits#mcpTool])", message: "All operations of MCP services must be tools" }
 })
 structure mcpServerDefinition {}
 
@@ -28,11 +28,11 @@ structure mcpServerDefinition {}
 )
 @trait
 @traitValidators({
-    AllOpsAreElicitations: { selector: "~> operation:not([trait|smithy4smcptraits#mcpElicitation])", message: "All operations of MCP services must be elicications" }
+    AllOpsAreElicitations: { selector: "~> operation:not([trait|mcptraits#mcpElicitation])", message: "All operations of MCP services must be elicications" }
 })
 structure mcpClientDefinition {}
 
-@trait(selector: "service[trait|smithy4smcptraits#mcpServerDefinition] ~>")
+@trait(selector: "service[trait|mcptraits#mcpServerDefinition] ~>")
 structure mcpTool {
     /// Optional tool name. If not provided, the operation name will be used as the tool name.
     name: String

@@ -5,11 +5,11 @@ import cats.effect.IO
 import cats.effect.IOApp
 import cats.syntax.all.*
 import fs2.io.process.Processes
+import mcptraits.McpClientApi
+import mcptraits.McpServerApi
 import modelcontextprotocol.ClientCapabilities
 import modelcontextprotocol.Implementation
 import my.server.GithubMcpServer
-import smithy4smcptraits.McpClientApi
-import smithy4smcptraits.McpServerApi
 
 object clientMain extends IOApp {
 

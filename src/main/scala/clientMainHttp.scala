@@ -4,12 +4,12 @@ import cats.effect.ExitCode
 import cats.effect.IO
 import cats.effect.IOApp
 import cats.syntax.all.*
+import mcptraits.McpServerApi
 import modelcontextprotocol.ClientCapabilities
 import modelcontextprotocol.Implementation
 import my.server.GithubMcpServer
 import org.http4s.Uri
 import org.http4s.ember.client.EmberClientBuilder
-import smithy4smcptraits.McpServerApi
 
 object clientMainHttp extends IOApp {
 
